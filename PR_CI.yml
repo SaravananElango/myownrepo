@@ -1,0 +1,224 @@
+name: PR CI
+
+on:
+  pull_request:
+    branches: [ develop ]
+    types: [ assigned, opened, synchronize, reopened, ready_for_review, labeled ]
+  workflow_dispatch:
+
+concurrency:
+  # See docs: https://docs.github.com/en/actions/using-workflows/workflow-syntax-for-github-actions#example-using-concurrency-to-cancel-any-in-progress-job-or-run
+  # Cancels any in-progress runs when this workflow is triggered again
+  group: ${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  ENV: dev
+  DBT_PROFILES_DIR: /home/runner/.dbt
+jobs:
+  pre-commit_check:
+    if: ${{ !github.event.pull_request.draft }}
+    runs-on: ubuntu-latest
+    outputs:
+      tf_files: ${{ steps.changed-files.outputs.terraform_any_changed }}
+    steps:
+      - name: Check out source repository
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: '3.12'
+
+      - name: Get Changed files
+        id: changed-files
+        uses: tj-actions/changed-files@ed68ef82c095e0d48ec87eccea555d944a631a4c # v46.0.5
+        with:
+          files_yaml: |
+            terraform:
+              - '**/*.tfvars'
+              - '**/*.tf'
+
+      - name: Check Jira input
+        if: ${{ !contains(github.event.pull_request.labels.*.name, 'Renovate-upgrades') }}
+        run: |
+          PR_TITLE="${{ github.event.pull_request.title }}"
+          COMMIT_MESSAGES=$(git log --pretty=format:"%s" ${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }})
+          echo $COMMIT_MESSAGES;
+          if echo "$COMMIT_MESSAGES" | grep -E -q "PDI-[0-9]+" || echo "$PR_TITLE" | grep -E -q "PDI-[0-9]+"; then
+            echo "Jira card number found !"
+          else
+            echo "Error: Neither PR title or 1 commit messages contain a JIRA card number."
+            exit 1
+          fi
+
+      - name: "Run pre-commit checks (on error: run 'pre-commit run --all-files' locally and push changes)"
+        run: |
+          pip install -r requirements-dev.txt
+          pre-commit run --all-files
+
+  changes:
+    needs: [ pre-commit_check ]
+    runs-on: ubuntu-latest
+    # Set job outputs to values from filter step
+    outputs:
+      dbt: ${{ steps.filter.outputs.dbt }}
+    steps:
+      # For pull requests it's not necessary to checkout the code
+      - uses: dorny/paths-filter@4512585405083f25c027a35db413c2b3b9006d50 # v2.11.12
+        id: filter
+        with:
+          filters: |
+            dbt:
+              - 'temp_dbt/**'
+              - 'requirements-dbt.txt'
+
+
+  run_dbt:
+    needs: [ changes ]
+    # We run this job if the workflow trigger event is `pull_request`
+    # AND some dbt related files have changed
+    # AND the type of action on the PR is not `labeled`
+    # OR if it is `labeled` (i.e. someone added a label to the PR) then we only
+    # want to run this job if the label added was `'dbt-full-refresh'`
+    if: |
+      github.event_name == 'pull_request' &&
+      needs.changes.outputs.dbt == 'true' &&
+      (
+        github.event.action != 'labeled' ||
+        (
+          github.event.action == 'labeled'
+          && github.event.label.name == 'dbt-full-refresh'
+        )
+      )
+    runs-on: ubuntu-latest
+    name: |
+      dbt run - full-refresh: ${{
+        contains(github.event.pull_request.labels.*.name, 'dbt-full-refresh')
+      }}
+
+    steps:
+      - name: Check out source repository
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+
+      - name: Set workflow's environment variables
+        run: |
+          echo "dbt_project_dir=$GITHUB_WORKSPACE/temp_dbt" >> $GITHUB_ENV
+          echo "develop_branch_dir=$GITHUB_WORKSPACE/_develop_branch" >> $GITHUB_ENV
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: '3.12'
+
+      - name: Authenticate
+        uses: google-github-actions/auth@c200f3691d83b41bf9bbd8638997a462592937ed # v2.1.13
+        with:
+          token_format: 'access_token'
+          workload_identity_provider: ${{ secrets.DEV_WIP }}
+          service_account: ${{ secrets.DEV_SA }}
+
+      - name: Setup dbt
+        uses: ./.github/actions/dbt_setup
+        with:
+          dbt_profiles_dir: ${{ env.DBT_PROFILES_DIR }}
+
+
+      - name: Checkout `develop` and run `dbt compile`
+        id: dbt_compile_develop
+        uses: ./.github/actions/dbt_checkout_and_compile
+        with:
+          env: ${{ env.ENV }}
+          branch_name: develop
+          checkout_dir: ${{ env.develop_branch_dir }}
+
+      - name: Compile whole dbt project
+        working-directory: ${{ env.dbt_project_dir }}
+        run: |
+          dbt compile ${{ contains(github.event.pull_request.labels.*.name, 'dbt-full-refresh') && '--full-refresh' || '' }}
+
+      - name: List modified dbt resources
+        # Because the dbt state selector has some caveats, and it's not always
+        # clear what it will return, we output the list of models here for
+        # possible debug purposes (without any operators like `+` or `@`)
+        # (see: https://docs.getdbt.com/reference/node-selection/state-comparison-caveats)
+        working-directory: ${{ env.dbt_project_dir }}
+        run: |
+          echo "Models:"
+          dbt ls \
+            --state ${{ steps.dbt_compile_develop.outputs.dbt_target_dir_path }} \
+            --select state:modified \
+            --resource-type model
+          echo "=================================="
+          echo "Tests:"
+          dbt ls \
+            --state ${{ steps.dbt_compile_develop.outputs.dbt_target_dir_path }} \
+            --select state:modified \
+            --resource-type test
+
+      - name: Get PR-specific schema name
+        id: dbt_pr_schema_name
+        uses: ./.github/actions/dbt_get_pr_schema_name
+
+      - name: Run 'dbt build' all modified resources (except "monthly")
+        ########################################################################
+        # - Exclude "monthly" models because they _can_ be expensive to run
+        #   (however setting these up *properly* as 'incremental' models should solve it, in the future)
+        #
+        # - `dbt build` will run models, test tests, snapshot snapshots and seed seeds
+        #   (see: https://docs.getdbt.com/reference/commands/build)
+        #
+        # - The provided env var `dbt_custom_schema` + the target being `dev` will
+        # result the `schema` for all nodes being set to `dbt_custom_schema`'s value.
+        #
+        # - dbt's defer will replace nodes in the `manifest.json` (this includes the schema name)
+        # with the node (with same id) from the `manifest.json` file found in the path
+        # pointed to by `--state`. However, this is only happens when the following two
+        # conditions are met:
+        # 1. The referenced node is excluded from the model selection criteria of the current run?
+        # 2. The referenced node does not exist as a database object in the current environment?
+        # (see: https://docs.getdbt.com/reference/node-selection/defer)
+        ########################################################################
+        working-directory: ${{ env.dbt_project_dir }}
+        run: |
+          dbt_custom_schema="${{ steps.dbt_pr_schema_name.outputs.dbt_pr_schema_name }}" \
+          dbt build \
+            --target ${ENV} \
+            --defer \
+            --state ${{ steps.dbt_compile_develop.outputs.dbt_target_dir_path }} \
+            --select state:modified+ \
+            ${{ contains(github.event.pull_request.labels.*.name, 'dbt-full-refresh') && '--full-refresh' || '' }} \
+            --exclude config.meta.update_freq:monthly
+
+      ##########################################################################
+      # Upload dbt artifacts
+      ##########################################################################
+      - if: always()
+        name: Upload dbt artifacts as GitHub Actions Artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        # For default retention period see:
+        # https://docs.github.com/en/actions/learn-github-actions/usage-limits-billing-and-administration#artifact-and-log-retention-policy
+        # If directory does not (yet) exist, warning is raised (not an error!)
+        with:
+          name: dbt-artifacts
+          path: ${{ env.dbt_project_dir }}/target
+
+  fail_on_skip:
+    needs: [ run_dbt ]
+    # We run this job if `run_dbt` has been skipped, but not because there were
+    # no dbt changes. In that case we skip this job as well.
+    if: |
+      needs.changes.outputs.dbt == 'true' &&
+      needs.run_dbt.result == 'skipped'
+    runs-on: ubuntu-latest
+
+    # When adding a label that is not 'dbt-full-refresh' it will skip the
+    # 'run_dbt' job. This has the effect of making the workflow seem
+    # 'successful' (in UI: ✅). A problem can occur when the initial workflow
+    # run failed but then a non-'dbt-full-refresh' label is added which reruns
+    # the workflow, skips it (bc the label is not 'dbt-full-refresh') and make
+    # it seem as if the workflow has now passed.
+    # It would then also allow for merging even though actually the previous
+    # non-skipped run failed and so it should NOT be mergeable yet!
+    steps:
+      - name: Fail if 'run_dbt' job is skipped
+        run: exit 1

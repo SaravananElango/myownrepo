@@ -1,0 +1,90 @@
+name: "Select type of dbt run"
+
+description: |
+  Selects on which (sub)set of models to run dbt on and runs it on them.
+
+inputs:
+  dbt_selector:
+    required: true
+    description: |
+      Defines on which subset of models to run dbt.
+      Possible values:
+        - "daily"
+        - "weekly"
+        - "monthly"
+        - "full"
+  env:
+    required: true
+    description: |
+      Environment to run dbt on
+      Possible values (found in `profiles.yml`):
+        - "dev"
+        - "test"
+        - "prod"
+  service_account:
+    required: true
+    description: "GCP service account email to authenticate with"
+  workload_identity_provider:
+    required: true
+    description: "GCP Workload Identity Provider to authenticate with"
+  slack_notification:
+    required: true
+    description: "SLACK auth secret"
+
+runs:
+  using: "composite"
+  steps:
+  - name: Setup GCP auth for env '${{ inputs.env }}'
+    uses: google-github-actions/auth@c200f3691d83b41bf9bbd8638997a462592937ed # v2.1.13
+    with:
+      token_format: 'access_token'
+      workload_identity_provider: ${{ inputs.workload_identity_provider }}
+      service_account: ${{ inputs.service_account }}
+
+  - if: inputs.dbt_selector == 'daily' || inputs.dbt_selector == 'weekly' || inputs.dbt_selector == 'monthly'
+    name: Run dbt '${{ inputs.dbt_selector }}' models (i.e. where update_freq="${{ inputs.dbt_selector }}")
+    uses: ./.github/actions/dbt_run_and_test
+    id: run_dbt_subset
+    with:
+      env: "${{ inputs.env }}"
+      update_freq: ${{ inputs.dbt_selector }}
+
+  - if: inputs.dbt_selector == 'full'
+    name: Set workflow's environment variables
+    shell: bash
+    run: |
+      echo "main_branch_dir=$GITHUB_WORKSPACE/_main_branch" >> $GITHUB_ENV
+
+  - if: inputs.dbt_selector == 'full'
+    name: Checkout `main HEAD^1` and run `dbt compile`
+    uses: ./.github/actions/dbt_checkout_and_compile
+    id: dbt_compile_main
+    with:
+      env: ${{ inputs.env }}
+      branch_name: main
+      checkout_dir: ${{ env.main_branch_dir }}
+      checkout_prev_commit: 'true'
+
+  - if: inputs.dbt_selector == 'full'
+    name: Full DBT run (excluding monthly)
+    uses: ./.github/actions/dbt_run_and_test
+    id: run_dbt_full
+    with:
+      env: "${{ inputs.env }}"
+      dbt_target_dir_path: ${{ steps.dbt_compile_main.outputs.dbt_target_dir_path }}
+
+  ##########################################################################
+  # Slack Notification
+  ##########################################################################
+  - if: |
+      failure()
+      && (
+        steps.run_dbt_subset.outcome == 'failure'
+        || steps.run_dbt_full.outcome == 'failure'
+      )
+    name: Slack notification on failure
+    uses: ./.github/actions/slack_failure_notification
+    with:
+      webhook_url: ${{ inputs.slack_notification }}
+      message: >
+        Datamart workflow with dbt_selector '${{ inputs.dbt_selector }}' on environment '${{ inputs.env }}' has failed

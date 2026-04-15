@@ -1,0 +1,36 @@
+name: "Run Elementary Report"
+
+description: "Run Elementary Report"
+
+inputs:
+  env:
+    required: true
+  input_automation_key:
+    required: true
+  url_webhook:
+    required: true
+
+runs:
+  using: "composite"
+  steps:
+  - name: Setup GCP auth for env '${{ inputs.env }}'
+    uses: google-github-actions/auth@3a3c4c57d294ef65efaaee4ff17b22fa88dd3c69 # v1.3.0
+    with:
+      credentials_json: ${{ inputs.input_automation_key }}
+
+  - name: Set workflow's environment variables
+    shell: bash
+    run: |
+      echo "dbt_project_dir=$GITHUB_WORKSPACE/temp_dbt" >> $GITHUB_ENV
+
+  - if: ${{ inputs.env == 'prod' }}
+    name: Install and run report
+    working-directory: ${{ env.dbt_project_dir }}
+    shell: bash
+    run: |
+      # Minor versions of elementary-data (python package) and the package elementary-data/elementary
+      # need to have the same minor version
+      pip install elementary-data==0.18.3
+      pip install 'elementary-data[bigquery]'
+      edr report
+      edr send-report --gcs-bucket-name elementary_run_result

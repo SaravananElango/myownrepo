@@ -1,0 +1,59 @@
+name: "Update dbt documentation"
+
+description: "Generate dbt documentation and update specified repo with it"
+inputs:
+  gh_key:
+    required: true
+    description: "Gh key to fetch/push changes"
+  gh_username:
+    required: true
+    description: "GH username used for committing"
+  gh_email:
+    required: true
+    description: "GH email used for committing"
+  env:
+    required: true
+    description: "Environment to generate dbt docs from"
+
+runs:
+  using: "composite"
+  steps:
+  - name: Generate docs from base branch
+    shell: bash
+    run: |
+      # Generate documentation files
+      cd temp_dbt
+      dbt docs generate --target ${{ inputs.env }} --profiles-dir .
+
+  - name: Check out source repository
+    uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+    with:
+      token: ${{ inputs.gh_key }}
+      ref: gh-pages
+      path: gh-pages
+
+  - name: Check out source repository
+    shell: bash
+    run: |
+      # Generate documentation files
+      # Copy generated files to docs directory
+      cd gh-pages
+      echo "Copying docs files"
+      cp $GITHUB_WORKSPACE/temp_dbt/target/index.html .
+      cp $GITHUB_WORKSPACE/temp_dbt/target/catalog.json .
+      cp $GITHUB_WORKSPACE/temp_dbt/target/manifest.json .
+      mkdir -p docs
+      # cp $GITHUB_WORKSPACE/temp_dbt/docs/assets/* docs/assets/
+
+      # Commit the changes to the branch to be readable from Github pages
+      # (NB: user a valid username with write access to the repo)
+      git status
+      git config user.name ${{ inputs.gh_username }}
+      git config user.email ${{ inputs.gh_email }}
+      git add \
+        index.html \
+        catalog.json \
+        manifest.json \
+        docs/assets/*
+      git commit -m "Update docs with latest files"
+      git push origin gh-pages

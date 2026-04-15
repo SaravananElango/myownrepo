@@ -1,0 +1,31 @@
+name: Setup dbt
+
+description: Setup dbt
+
+inputs:
+  dbt_profiles_dir:
+    required: true
+    description: Path to dbt profiles config directory, generally in the home directory
+
+runs:
+  using: "composite"
+  steps:
+
+  - name: Install dbt
+    shell: bash
+    run: |
+      # This is a workaround for the issue with dbt and wheel versions
+      pip install wheel==0.45.1
+      pip install -r requirements-dbt.txt
+
+  - name: Create ~/.dbt directory
+    shell: bash
+    run: mkdir ${{ inputs.dbt_profiles_dir }}
+
+  - name: Copy profiles.yml to ~/.dbt
+    shell: bash
+    run: cp temp_dbt/profiles.yml ${{ inputs.dbt_profiles_dir }}/profiles.yml
+
+  - name: Install dbt dependencies
+    shell: bash
+    run: cd temp_dbt && dbt deps

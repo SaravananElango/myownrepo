@@ -1,0 +1,27 @@
+name: Get the PR-specific schema name to pass to dbt
+
+description: |
+  Create and return the custom schema name based on the PR number, because it
+  uses the PR number this action should only be used on workflows triggered on
+  PRs.
+  This composite action exists because the same custom schema name is used in
+  multiple workflows: `pr-ci` AND `delete-pr-dataset`.
+
+outputs:
+  dbt_pr_schema_name:
+    description: PR-specific schema name for dbt
+    value: ${{ steps.dbt_pr_schema.outputs.name }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Create PR-specific schema name
+      id: dbt_pr_schema
+      shell: bash
+      # NOTE: The schema name shouldn't start with `_` because then it remains
+      # hidden in the BigQuery Web UI! We chose `0_` instead to still make it
+      # sort near the top of the dataset list in the UI (for ease of access).
+      # NOTE: in BQ `_` is lower in the ordering than numbers and letters, so a
+      # dataset named `0_` would appear lower in the list than `0Z`
+      run: |
+        echo "name=0_PR_${{ github.event.pull_request.number }}" >> $GITHUB_OUTPUT
