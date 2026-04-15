@@ -1,0 +1,40 @@
+name: "Create Automatic PR"
+
+description: "Create PR to automatically sync between 2 branches"
+inputs:
+  gh_token:
+    required: true
+    description: "GH Secret Token for checking out/creating PR"
+  destination:
+    required: true
+    description: "Destination branch to merge into"
+
+runs:
+  using: "composite"
+  steps:
+  - name: Create pull request
+    id: open-pr
+    uses: diillson/auto-pull-request@4cf50b3681cd76250f37841466e61e514a377064 # v1.0.1
+    with:
+      source_branch: ${{ github.ref_name }}
+      destination_branch: ${{ inputs.destination }}
+      pr_title: "[Automated] Merge ${{ github.ref_name }} into ${{ inputs.destination }}"
+      pr_body: "Automated Pull Request"
+      pr_label: "auto-merge"
+      github_token: ${{ inputs.gh_token }}
+  ## Step needed when branch protection rule "require pull request reviews before merging" is enabled
+  ## See https://github.com/peter-evans/enable-pull-request-automerge
+  #- name: Approve PR
+  #  if: steps.open-pr.outputs.pr_created == 'true'
+  #  run: gh pr review --approve "${{ steps.open-pr.outputs.pr_number }}"
+  #  shell: bash
+  #  env:
+  #    GH_TOKEN: ${{ inputs.gh_token }}
+
+  - name: Enable automerge
+    if: steps.open-pr.outputs.pr_number != ''
+    uses: peter-evans/enable-pull-request-automerge@a660677d5469627102a1c1e11409dd063606628d # v3.0.0
+    with:
+      token: ${{ inputs.gh_token }}
+      pull-request-number: ${{ steps.open-pr.outputs.pr_number }}
+      merge-method: merge

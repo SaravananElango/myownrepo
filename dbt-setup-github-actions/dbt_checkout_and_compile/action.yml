@@ -1,0 +1,61 @@
+name: Checkout a branch and compile the dbt project
+
+description: |
+  Checkout a branch and compile the dbt project
+  Returns the absolute path to the target directory
+
+inputs:
+  branch_name:
+    required: true
+    description: Branch name
+  checkout_dir:
+    required: true
+    description: Directory git should check the given branch out in
+  checkout_prev_commit:
+    required: false
+    description: |
+      Optional parameter, expected value if given: 'true'
+      If 'true' the second the last commit (using `HEAD^`) is checked out on the
+      given branch instead of using the `HEAD` of the branch
+      If not given or the value is not 'true' then the `HEAD` of the given
+      branch is used
+  env:
+    required: true
+    description: |
+      Environment to run dbt on
+      Possible values (found in `profiles.yml`):
+        - "dev"
+        - "test"
+        - "prod"
+
+outputs:
+  dbt_target_dir_path:
+    description: Absolute path to dbt target directory
+    value: ${{ steps.dbt_compile.outputs.target_dir }}
+
+runs:
+  using: "composite"
+  steps:
+  - name: Check out repo at '${{ inputs.branch_name }}'
+    uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+    with:
+      ref: ${{ inputs.branch_name}}
+      path: ${{ inputs.checkout_dir }}
+      fetch-depth: 0
+
+  - if: ${{ inputs.checkout_prev_commit == 'true' }}
+    shell: bash
+    working-directory: ${{ inputs.checkout_dir }}
+    run: git checkout HEAD^
+
+  - name: Run dbt deps and compile
+    id: dbt_compile
+    shell: bash
+    working-directory: ${{ inputs.checkout_dir }}/temp_dbt
+    run: |
+      dbt deps
+      # Compiling with full refresh is faster because it skips all the
+      # `{{ if is_incremental() }}` parts, which often execute SQL.
+      # (I don't think this should cause problems down the line)
+      dbt compile --target ${{ inputs.env }} --full-refresh
+      echo "target_dir=$(pwd)/target" >> $GITHUB_OUTPUT

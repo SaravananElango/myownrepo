@@ -1,0 +1,25 @@
+name: "Send slack failure notification"
+
+description: "Send slack notification message, used to notify actions failure"
+inputs:
+  webhook_url:
+    required: true
+    description: "Slack webhook URL"
+  message:
+    required: false
+    description: "Slack message for reporting"
+
+runs:
+  using: "composite"
+  steps:
+  - name: Slack notifications
+    uses: 8398a7/action-slack@77eaa4f1c608a7d68b38af4e3f739dcd8cba273e # v3.19.0
+    with:
+      status: 'failure'
+      fields: workflow, repo, message
+      text: ':no_entry: ${{ inputs.message }}'
+      channel: dp-temp-data-alerts
+      mention: 'here'
+      if_mention: failure
+    env:
+      SLACK_WEBHOOK_URL: ${{ inputs.webhook_url }}

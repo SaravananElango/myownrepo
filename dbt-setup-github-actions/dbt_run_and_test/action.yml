@@ -1,0 +1,118 @@
+name: "Run dbt"
+
+description: |
+  Run and test dbt pipeline.
+
+  If `update_freq` is given then `dbt_target_dir_path` won't be used and dbt
+  will be run on the subset of models where `update_freq` is equal to the value
+  given
+  If `update_freq` is NOT given then `dbt_target_dir_path` is expected to be
+  given instead because it will try to run only modified models when
+  `update_freq` is not given and it needs a target directory with state file to
+  identify the modified models
+inputs:
+  env:
+    required: true
+    description: |
+      Environment to run dbt on
+      Possible values (found in `profiles.yml`):
+        - "dev"
+        - "test"
+        - "prod"
+  update_freq:
+    required: false
+    description: |
+      Optional parameter to run models based on the `config.meta.update_freq`
+      value.
+      Possible values:
+        - "daily"
+        - "weekly"
+        - "monthly"
+      NOTE: If no value given then it is expected to provide a value for the
+      `dbt_target_dir_path` parameter as we attempt to run 'all' modified models
+      compared to the state provided by `dbt_target_dir_path`
+  dbt_target_dir_path:
+    required: false
+    description: |
+      Path to dbt `target/` directory to compare state to (again: if a value
+      for `update_freq` is provided then this parameter does nothing)
+      If a value is provided for this parameter then we run dbt with `--state`
+      i.e. comparing the current dbt state to the state provided by this param
+      (And of course if it's not provided we also do not compare to anything)
+
+runs:
+  using: "composite"
+  steps:
+  - name: Set workflow's environment variables
+    shell: bash
+    run: |
+      echo "dbt_project_dir=$GITHUB_WORKSPACE/temp_dbt" >> $GITHUB_ENV
+
+  - name: Run Seed files
+    working-directory: ${{ env.dbt_project_dir }}
+    shell: bash
+    run: |
+      echo "Running seed for static files"
+      dbt seed --target ${{ inputs.env }}
+
+  - name: Run Snapshot command
+    working-directory: ${{ env.dbt_project_dir }}
+    shell: bash
+    run: |
+      echo "Running dbt snapshot command"
+      dbt snapshot --target ${{ inputs.env }}
+
+  - if: ${{ inputs.update_freq }}
+    name: Running and testing models with update_freq '${{ inputs.update_freq }}'
+    working-directory: ${{ env.dbt_project_dir }}
+    shell: bash
+    run: |
+      echo "Running dbt ${{ inputs.update_freq }} tagged models"
+      if [ "${{ inputs.update_freq }}" == "monthly" ]
+      then
+        dbt run \
+         --selector ${{ inputs.update_freq }} \
+         --target ${{ inputs.env }} \
+         --full-refresh
+      else
+        dbt run \
+         --selector ${{ inputs.update_freq }} \
+         --target ${{ inputs.env }}
+      fi
+
+      echo "Testing dbt ${{ inputs.update_freq }} tagged models"
+      # Exclude monthly models from daily & weekly runs
+      # TODO: Revise this condition if monthly has more than the current single model, stg_ikea_ap_core__global_cem_sales_fcst_comp
+      if [ ${{ inputs.update_freq }} == "monthly" ]
+      then
+        dbt test --store-failures \
+          --target ${{ inputs.env }}
+      else
+        dbt test --store-failures \
+          --selector all_except_monthly \
+          --target ${{ inputs.env }}
+      fi
+
+  - if: ${{ ! inputs.update_freq }}
+    name: List modified dbt resources
+    # Because the dbt state selector has some caveats, and it's not always
+    # clear what it will return, we output the list of models here for
+    # possible debug purposes (without any operators like `+` or `@`)
+    # (see: https://docs.getdbt.com/reference/node-selection/state-comparison-caveats)
+    working-directory: ${{ env.dbt_project_dir }}
+    shell: bash
+    run: |
+      echo Modified models:
+      dbt ls \
+        --state ${{ inputs.dbt_target_dir_path }} \
+        --select state:modified --resource-type model
+
+  - if: ${{ ! inputs.update_freq }}
+    name: Running and testing modified (and downstream) models
+    working-directory: ${{ env.dbt_project_dir }}
+    shell: bash
+    run: |
+      dbt build \
+        --target ${{ inputs.env }} \
+        --state ${{ inputs.dbt_target_dir_path }} \
+        --select state:modified+
