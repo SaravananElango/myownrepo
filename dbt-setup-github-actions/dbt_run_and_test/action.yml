@@ -82,7 +82,7 @@ runs:
 
       echo "Testing dbt ${{ inputs.update_freq }} tagged models"
       # Exclude monthly models from daily & weekly runs
-      # TODO: Revise this condition if monthly has more than the current single model, stg_ikea_ap_core__global_cem_sales_fcst_comp
+      # TODO: Revise this condition if monthly has more than the current single model
       if [ ${{ inputs.update_freq }} == "monthly" ]
       then
         dbt test --store-failures \
