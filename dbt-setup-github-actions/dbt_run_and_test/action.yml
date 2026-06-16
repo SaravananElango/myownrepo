@@ -36,9 +36,7 @@ inputs:
     description: |
       Path to dbt `target/` directory to compare state to (again: if a value
       for `update_freq` is provided then this parameter does nothing)
-      If a value is provided for this parameter then we run dbt with `--state`
-      i.e. comparing the current dbt state to the state provided by this param
-      (And of course if it's not provided we also do not compare to anything)
+     
 
 runs:
   using: "composite"
@@ -81,8 +79,7 @@ runs:
       fi
 
       echo "Testing dbt ${{ inputs.update_freq }} tagged models"
-      # Exclude monthly models from daily & weekly runs
-      # TODO: Revise this condition if monthly has more than the current single model
+  
       if [ ${{ inputs.update_freq }} == "monthly" ]
       then
         dbt test --store-failures \
@@ -95,10 +92,7 @@ runs:
 
   - if: ${{ ! inputs.update_freq }}
     name: List modified dbt resources
-    # Because the dbt state selector has some caveats, and it's not always
-    # clear what it will return, we output the list of models here for
-    # possible debug purposes (without any operators like `+` or `@`)
-    # (see: https://docs.getdbt.com/reference/node-selection/state-comparison-caveats)
+  
     working-directory: ${{ env.dbt_project_dir }}
     shell: bash
     run: |
