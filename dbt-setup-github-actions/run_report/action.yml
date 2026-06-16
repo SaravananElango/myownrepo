@@ -16,7 +16,7 @@ runs:
   - name: Setup GCP auth for env '${{ inputs.env }}'
     uses: google-github-actions/auth@3a3c4c57d294ef65efaaee4ff17b22fa88dd3c69 # v1.3.0
     with:
-      credentials_json: ${{ inputs.input_automation_key }}
+      credentials_json:
 
   - name: Set workflow's environment variables
     shell: bash
