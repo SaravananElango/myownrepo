@@ -17,7 +17,7 @@ inputs:
     required: true
     description: |
       Environment to run dbt on
-      Possible values (found in `profiles.yml`):
+      Possible values :
         - "dev"
         - "test"
         - "prod"
@@ -34,12 +34,12 @@ inputs:
 runs:
   using: "composite"
   steps:
-    - name: Setup GCP auth for env '${{ inputs.env }}'
+    - name: Setup GCP auth for env 
       uses: google-github-actions/auth@c200f3691d83b41bf9bbd8638997a462592937ed # v2.1.13
       with:
         token_format: 'access_token'
-        workload_identity_provider: ${{ inputs.workload_identity_provider }}
-        service_account: ${{ inputs.service_account }}
+        workload_identity_provider: 
+        service_account: 
 
     - if: inputs.dbt_selector == 'daily' || inputs.dbt_selector == 'weekly' || inputs.dbt_selector == 'monthly'
       name: Run dbt '${{ inputs.dbt_selector }}' models (i.e. where update_freq="${{ inputs.dbt_selector }}")
