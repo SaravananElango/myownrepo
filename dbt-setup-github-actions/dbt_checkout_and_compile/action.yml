@@ -54,8 +54,6 @@ runs:
     working-directory: ${{ inputs.checkout_dir }}/temp_dbt
     run: |
       dbt deps
-      # Compiling with full refresh is faster because it skips all the
-      # `{{ if is_incremental() }}` parts, which often execute SQL.
-      # (I don't think this should cause problems down the line)
+     
       dbt compile --target ${{ inputs.env }} --full-refresh
       echo "target_dir=$(pwd)/target" >> $GITHUB_OUTPUT
