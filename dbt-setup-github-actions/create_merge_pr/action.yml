@@ -21,15 +21,7 @@ runs:
       pr_title: "[Automated] Merge ${{ github.ref_name }} into ${{ inputs.destination }}"
       pr_body: "Automated Pull Request"
       pr_label: "auto-merge"
-      github_token: ${{ inputs.gh_token }}
-  ## Step needed when branch protection rule "require pull request reviews before merging" is enabled
-  ## See https://github.com/peter-evans/enable-pull-request-automerge
-  #- name: Approve PR
-  #  if: steps.open-pr.outputs.pr_created == 'true'
-  #  run: gh pr review --approve "${{ steps.open-pr.outputs.pr_number }}"
-  #  shell: bash
-  #  env:
-  #    GH_TOKEN: ${{ inputs.gh_token }}
+
 
   - name: Enable automerge
     if: steps.open-pr.outputs.pr_number != ''
