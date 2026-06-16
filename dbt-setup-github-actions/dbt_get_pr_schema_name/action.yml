@@ -18,10 +18,6 @@ runs:
     - name: Create PR-specific schema name
       id: dbt_pr_schema
       shell: bash
-      # NOTE: The schema name shouldn't start with `_` because then it remains
-      # hidden in the BigQuery Web UI! We chose `0_` instead to still make it
-      # sort near the top of the dataset list in the UI (for ease of access).
-      # NOTE: in BQ `_` is lower in the ordering than numbers and letters, so a
-      # dataset named `0_` would appear lower in the list than `0Z`
+
       run: |
         echo "name=0_PR_${{ github.event.pull_request.number }}" >> $GITHUB_OUTPUT
